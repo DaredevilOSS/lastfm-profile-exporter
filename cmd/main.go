@@ -2,7 +2,7 @@ package main
 
 import (
 	"github.com/alexflint/go-arg"
-	"lastfm-profile-exporter/internal/toptracks"
+	"lastfm-profile-exporter/internal"
 )
 
 type args struct {
@@ -15,6 +15,6 @@ func main() {
 	arg.MustParse(&args)
 
 	for _, username := range args.Usernames {
-		toptracks.Export(username)
+		internal.Collect(username)
 	}
 }

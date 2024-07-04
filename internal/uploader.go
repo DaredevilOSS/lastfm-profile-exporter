@@ -1,15 +1,15 @@
-package common
+package internal
 
 import (
 	"context"
 	"fmt"
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"log"
-	"math/rand"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const containerName = "debug"
@@ -17,68 +17,60 @@ const containerName = "debug"
 var accountName = "lastfmprofileexports" // os.Getenv("ACCOUNT_NAME")
 var accountKey = os.Getenv("ACCOUNT_KEY")
 
-func uploadToBlobStorage(filename string) error {
+func uploadToBlobStorage(filename string) (*string, error) {
 	credential, err := azblob.NewSharedKeyCredential(accountName, accountKey)
 	if err != nil {
-		return fmt.Errorf("failed to create credentials: %w", err)
+		return nil, err
 	}
 	pipeline := azblob.NewPipeline(credential, azblob.PipelineOptions{})
 
 	file, err := os.Open(filename)
 	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
+		return nil, err
 	}
 	defer file.Close()
 
 	blobName := filepath.Base(filename)
 	log.Printf("Upload file %s as blob %s\n", filename, blobName)
-	azureUrl := fmt.Sprintf("https://%s.blob.core.windows.net/%s/%s", accountName, containerName, blobName)
+	azureUrl := fmt.Sprintf("https://%s.blob.core.windows.net/%s", accountName, containerName)
 	parsedUrl, err := url.Parse(azureUrl)
 	if err != nil {
-		return fmt.Errorf("failed to parse URL: %w", err)
+		return nil, err
 	}
 
 	containerURL := azblob.NewContainerURL(*parsedUrl, pipeline)
 	blobURL := containerURL.NewBlockBlobURL(blobName)
 	_, err = azblob.UploadFileToBlockBlob(context.Background(), file, blobURL, azblob.UploadToBlockBlobOptions{
 		BlockSize:   azblob.BlockBlobMaxUploadBlobBytes,
-		Parallelism: 16,
+		Parallelism: 8,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to upload file: %w", err)
+		return nil, err
 	}
-	return nil
+	blobUrlStr := blobURL.String()
+	return &blobUrlStr, nil
 }
 
-const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-func randString(n int) string {
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = letterBytes[rand.Int63()%int64(len(letterBytes))]
-	}
-	return string(b)
-}
-
-func WriteToFile(username string, method string, contents []string) string {
-	filename := fmt.Sprintf("/tmp/%s_%s_%s.ndjson", username, method, randString(16))
+func WriteToFile(username string, method string, contents []string) (*string, error) {
+	uploadTimestampStr := time.Now().Format("1970_01_01T00_00_00")
+	filename := fmt.Sprintf("/tmp/%s_%s_%s.ndjson", username, method, uploadTimestampStr)
 	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Fatalf("failed to open file: %s", err)
+		return nil, err
 	}
 	defer file.Close()
 
 	_, err = file.WriteString(strings.Join(contents, "\n"))
 	if err != nil {
-		log.Fatalf("failed to write to file: %s", err)
+		return nil, err
 	}
 	log.Printf("Wrote top tracks file of %d lines\n", len(contents))
-	return filename
+	return &filename, nil
 }
 
-func Uploader(inputChannel FileChannel) {
+func upload(inputChannel chan string) {
 	for filename := range inputChannel {
-		err := uploadToBlobStorage(filename)
+		_, err := uploadToBlobStorage(filename)
 		if err != nil {
 			log.Println(err)
 		}
